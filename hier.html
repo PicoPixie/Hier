@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style type="text/css">
+html, body { height: 100%; margin: 0; padding: 0; }
+#map { height: 100%; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<!-- include PubNub lib -->
+<script src="http://cdn.pubnub.com/pubnub-3.7.15.min.js"></script>
+<!-- instantiate a local PubNub client so we may message with it -->
+<script type="text/javascript">
+
+var pubnub = PUBNUB({
+	subscribe_key: 'sub-YOUR-SUBSCRIBE-KEY',
+	publish_key: 'pub-YOUR-PUBLISH-KEY',
+	restore: true //catch-up on any missed msgs on reconnect
+});
+
+var map; //single Google map
+var dogPins = []; //map markers
+var sheepPins = [];
+
+/*
+* Default dog position to Uluru, Australian Outback
+* On page load request users permission to send real location data
+*/
+
+var dogPos = {lat:-25.363, lng:131.044};
+
+function insideCircle(dog,sheepLat,sheepLng) {
+	var sheepdog = new google.maps.LatLng(dog.lat,dog.lng);
+	var sheep = new google.maps.LatLng(sheepLat, sheepLng);
+	var delta = google.maps.geometry.spherical.computeDistanceBetween(sheepdog, sheep);
+	//delta in meters
+	if(delta > 500) {
+		//out of bounds, circle perimeter breach
+		return false;
+	} else
+		return true;
+}
+
+/*
+* some utility fns. to frob with map pin arrays
+*/
+function setMapOnAll() {
+	for(var i = 0; i < sheepPins.length; i++) {
+		sheepPins[i].setMap(map);
+	}
+	for(var j = 0; j < dogPins.length; j++) {
+		dogPins[j].setMap(map);
+	}
+}
+
+function refreshSheep(msg,map) {
+	for(var i = 0; i < sheepPins.length; i++) {
+		if(sheepPins[i].id == msg.id) {
+			//remove old marker from map
+			sheepPins[i].setMap(null);
+			//remove w/out leaving 'hole' in array
+			sheepPins.splice(i,1); 
+		}	
+	}
+	var sheepPos = new google.maps.LatLng(msg.lat,msg.lng);
+	var sheepMarker = new google.maps.Marker({
+		position: sheepPos,
+		map: map,
+		title: 'Sheep_' + msg.id,
+		label: msg.id,
+		id: msg.id
+	});
+	//add new marker
+	sheepPins.push(sheepMarker);
+	//add new marker to map
+	setMapOnAll();
+}
+
+function refreshDog(location,map) {
+	for(var i = 0; i < dogPins.length; i++) {
+		//remove old marker from map
+		dogPins[i].setMap(null);
+	}
+	//delete old marker
+	dogPins = []; 
+	var dogMarker = new google.maps.Marker({
+		position: location,
+		map: map,
+		title: 'Sheepdog',
+		label: 'D'
+	});
+	//add new marker
+	dogPins.push(dogMarker);
+	//add new marker to map
+	setMapOnAll();
+}
+
+pubnub.subscribe({
+	channel: 'sheepCast',
+	callback: function(m){process(m)}
+});
+
+function process(message) {
+	refreshSheep(message,map);
+	//do some Math
+	if(!insideCircle(dogPos, message.lat, message.lng)) {
+		pubnub.publish({
+			channel: message.id, 
+			message: "BREACH",
+			callback: function(m){console.log(m)}
+		});
+	} else {
+		//say *something* else subscribe() on Unit 
+		//will block for 300s
+		pubnub.publish({
+			channel: message.id, 
+			message: "OK",
+			callback: function(m){console.log(m)}	
+		});
+	}
+}
+
+function showMap() {
+
+	map = new google.maps.Map(document.getElementById('map'),{ 
+		zoom: 15, //needs optimising for avg.smartphone 
+		center: dogPos,
+		mapTypeId: google.maps.MapTypeId.SATELLITE
+	});
+
+	var infoWindow = new google.maps.InfoWindow({map: map});
+	//show initial dog marker at default position
+	refreshDog(dogPos,map);
+
+	//try HTML5 geolocation
+	if(navigator.geolocation) {
+		navigator.geolocation.getCurrentPosition(function(position) {
+			dogPos = {
+				lat: position.coords.latitude,
+				lng: position.coords.longitude
+			};
+			refreshDog(dogPos,map);
+
+			map.setCenter(dogPos);
+			}, function() {
+				handleLocationError(true, infoWindow, map.getCenter());
+			});
+
+		navigator.geolocation.watchPosition(function(position) {
+			dogPos = {
+				lat: position.coords.latitude,
+				lng: position.coords.longitude
+			};
+			refreshDog(dogPos,map);
+
+			map.setCenter(dogPos);
+			}, function() {
+				handleLocationError(true, infoWindow, map.getCenter());
+			});
+	} else {
+		//browser doesn't support Geolocation
+		handleLocationError(false, infoWindow, map.getCenter());
+	}
+}
+</script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCTcseDaXlV9kX4vFLTEfmmVzdiEiiNvZ0&libraries=geometry&callback=showMap">
+</script>
+</body>
+</html>
